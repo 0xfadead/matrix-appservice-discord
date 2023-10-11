@@ -11,7 +11,10 @@ ENV NODE_ENV=production
 COPY --from=BUILD /tmp/src/build /build
 COPY --from=BUILD /tmp/src/config /config
 COPY --from=BUILD /tmp/src/node_modules /node_modules
+COPY ./secstart.sh /secstart.sh
 RUN sh -c 'cd /build/tools; for TOOL in *.js; do LINK="/usr/bin/$(basename $TOOL .js)"; echo -e "#!/bin/sh\ncd /data;\nnode /build/tools/$TOOL \$@" > $LINK; chmod +x $LINK; done'
-CMD node --max-old-space-size=4096 /build/src/discordas.js -p 9005 -c /data/config.yaml -f /data/discord-registration.yaml
+RUN apt update && apt install patch dos2unix
+RUN dos2unix ./secstart.sh
+CMD /secstart.sh
 EXPOSE 9005
 VOLUME ["/data"]
