@@ -117,46 +117,65 @@ export class UserSyncroniser {
                 userState.mxUserId.substring("@".length),
                 userState.id,
             );
-
         } else {
             const rUser = await this.userStore.getRemoteUser(userState.id);
             remoteUser = rUser ? rUser : new RemoteUser(userState.id);
         }
         await intent.ensureRegistered();
 
-        if (userState.displayName !== null) {
-            log.verbose(`Updating displayname for ${userState.mxUserId} to "${userState.displayName}"`);
-            await intent.underlyingClient.setDisplayName(userState.displayName);
-            remoteUser.displayname = userState.displayName;
+        const finish = async () => {
+            if (userUpdated) {
+                await this.userStore.setRemoteUser(remoteUser);
+                await this.UpdateStateForGuilds(remoteUser);
+            }
+        };
+
+        // Fetch Discord-wide profile for user
+        const profileState: IUserState = {
+            ...userState,
+        };
+        try {
+            const duser = await this.discord.GetDiscordUserOrMember(userState.id);
+            if (duser instanceof User) {
+                profileState.displayName = duser.username;
+                profileState.avatarUrl = duser.avatarURL({format: "png"});
+                profileState.removeAvatar = !!duser.avatar;
+            }
+        } catch (e) {
+            log.error("Error updating discord user profile", e)
+            return finish();
+        }
+
+        if (profileState.displayName !== null) {
+            log.verbose(`Updating displayname for ${profileState.mxUserId} to "${profileState.displayName}"`);
+            await intent.underlyingClient.setDisplayName(profileState.displayName);
+            remoteUser.displayname = profileState.displayName;
             userUpdated = true;
         }
 
-        if (userState.avatarUrl !== null) {
-            log.verbose(`Updating avatar_url for ${userState.mxUserId} to "${userState.avatarUrl}"`);
-            const data = await Util.DownloadFile(userState.avatarUrl);
+        if (profileState.avatarUrl !== null) {
+            log.verbose(`Updating avatar_url for ${profileState.mxUserId} to "${profileState.avatarUrl}"`);
+            const data = await Util.DownloadFile(profileState.avatarUrl);
             const avatarMxc = await intent.underlyingClient.uploadContent(
                 data.buffer,
                 data.mimeType,
-                userState.avatarId,
+                profileState.avatarId,
             );
             await intent.underlyingClient.setAvatarUrl(avatarMxc);
-            remoteUser.avatarurl = userState.avatarUrl;
+            remoteUser.avatarurl = profileState.avatarUrl;
             remoteUser.avatarurlMxc = avatarMxc;
             userUpdated = true;
         }
 
-        if (userState.removeAvatar) {
-            log.verbose(`Clearing avatar_url for ${userState.mxUserId} to "${userState.avatarUrl}"`);
+        if (profileState.removeAvatar) {
+            log.verbose(`Clearing avatar_url for ${profileState.mxUserId} to "${profileState.avatarUrl}"`);
             await intent.underlyingClient.setAvatarUrl("");
             remoteUser.avatarurl = null;
             remoteUser.avatarurlMxc = null;
             userUpdated = true;
         }
 
-        if (userUpdated) {
-            await this.userStore.setRemoteUser(remoteUser);
-            await this.UpdateStateForGuilds(remoteUser);
-        }
+        await finish();
     }
 
     public async JoinRoom(member: GuildMember | User, roomId: string, isWebhook: boolean = false) {
