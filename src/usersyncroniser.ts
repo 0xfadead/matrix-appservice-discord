@@ -22,8 +22,12 @@ import { Log } from "./log";
 import { IMatrixEvent } from "./matrixtypes";
 import { DbUserStore, RemoteUser } from "./db/userstore";
 import { Appservice, Intent } from "matrix-bot-sdk";
+import { LRUCache } from "lru-cache";
 
 const log = new Log("UserSync");
+const profileCache = new LRUCache({
+    ttl: 30 * 60 * 1000,
+} as any);
 
 const DEFAULT_USER_STATE = {
     avatarId: "",
@@ -131,49 +135,52 @@ export class UserSyncroniser {
         };
 
         // Fetch Discord-wide profile for user
-        const profileState: IUserState = {
-            ...userState,
-        };
-        try {
-            const duser = await this.discord.GetDiscordUserOrMember(userState.id);
-            if (duser instanceof User) {
-                profileState.displayName = duser.username;
-                profileState.avatarUrl = duser.avatarURL({format: "png"});
-                profileState.removeAvatar = !!duser.avatar;
+        if (!profileCache.get(userState.id)) {
+            profileCache.set(userState.id, true);
+            const profileState: IUserState = {
+                ...userState,
+            };
+            try {
+                const duser = await this.discord.GetDiscordUserOrMember(userState.id);
+                if (duser instanceof User) {
+                    profileState.displayName = duser.username;
+                    profileState.avatarUrl = duser.avatarURL({format: "png"});
+                    profileState.removeAvatar = !!duser.avatar;
+                }
+            } catch (e) {
+                log.error("Error updating discord user profile", e)
+                await finish();
+                return
             }
-        } catch (e) {
-            log.error("Error updating discord user profile", e)
-            await finish();
-            return
-        }
 
-        if (profileState.displayName !== null) {
-            log.verbose(`Updating displayname for ${profileState.mxUserId} to "${profileState.displayName}"`);
-            await intent.underlyingClient.setDisplayName(profileState.displayName);
-            remoteUser.displayname = profileState.displayName;
-            userUpdated = true;
-        }
+            if (profileState.displayName !== null) {
+                log.verbose(`Updating displayname for ${profileState.mxUserId} to "${profileState.displayName}"`);
+                await intent.underlyingClient.setDisplayName(profileState.displayName);
+                remoteUser.displayname = profileState.displayName;
+                userUpdated = true;
+            }
 
-        if (profileState.avatarUrl !== null) {
-            log.verbose(`Updating avatar_url for ${profileState.mxUserId} to "${profileState.avatarUrl}"`);
-            const data = await Util.DownloadFile(profileState.avatarUrl);
-            const avatarMxc = await intent.underlyingClient.uploadContent(
-                data.buffer,
-                data.mimeType,
-                profileState.avatarId,
-            );
-            await intent.underlyingClient.setAvatarUrl(avatarMxc);
-            remoteUser.avatarurl = profileState.avatarUrl;
-            remoteUser.avatarurlMxc = avatarMxc;
-            userUpdated = true;
-        }
+            if (profileState.avatarUrl !== null) {
+                log.verbose(`Updating avatar_url for ${profileState.mxUserId} to "${profileState.avatarUrl}"`);
+                const data = await Util.DownloadFile(profileState.avatarUrl);
+                const avatarMxc = await intent.underlyingClient.uploadContent(
+                    data.buffer,
+                    data.mimeType,
+                    profileState.avatarId,
+                );
+                await intent.underlyingClient.setAvatarUrl(avatarMxc);
+                remoteUser.avatarurl = profileState.avatarUrl;
+                remoteUser.avatarurlMxc = avatarMxc;
+                userUpdated = true;
+            }
 
-        if (profileState.removeAvatar) {
-            log.verbose(`Clearing avatar_url for ${profileState.mxUserId} to "${profileState.avatarUrl}"`);
-            await intent.underlyingClient.setAvatarUrl("");
-            remoteUser.avatarurl = null;
-            remoteUser.avatarurlMxc = null;
-            userUpdated = true;
+            if (profileState.removeAvatar) {
+                log.verbose(`Clearing avatar_url for ${profileState.mxUserId} to "${profileState.avatarUrl}"`);
+                await intent.underlyingClient.setAvatarUrl("");
+                remoteUser.avatarurl = null;
+                remoteUser.avatarurlMxc = null;
+                userUpdated = true;
+            }
         }
 
         await finish();
