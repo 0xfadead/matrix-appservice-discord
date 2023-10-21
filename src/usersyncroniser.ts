@@ -143,7 +143,8 @@ export class UserSyncroniser {
             }
         } catch (e) {
             log.error("Error updating discord user profile", e)
-            return finish();
+            await finish();
+            return
         }
 
         if (profileState.displayName !== null) {
