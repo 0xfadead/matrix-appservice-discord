@@ -128,10 +128,8 @@ export class UserSyncroniser {
         await intent.ensureRegistered();
 
         const finish = async () => {
-            if (userUpdated) {
-                await this.userStore.setRemoteUser(remoteUser);
-                await this.UpdateStateForGuilds(remoteUser);
-            }
+            await this.userStore.setRemoteUser(remoteUser);
+            await this.UpdateStateForGuilds(remoteUser);
         };
 
         // Fetch Discord-wide profile for user
